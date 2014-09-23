@@ -112,3 +112,37 @@ class RoutingTableTests(unittest.TestCase):
         self.assertEqual(5, len(bucket))
         self.assertEqual(1, len(replacement_cache))
         self.assertEqual('six-new', replacement_cache[six])
+
+    def test_finding_peers(self):
+        table = RoutingTable(0b0000, k=5)
+
+        table.update_peer(0b0001, 'one')
+        table.update_peer(0b0010, 'two')
+        table.update_peer(0b0011, 'three')
+        table.update_peer(0b0100, 'four')
+        # 0b0101 (five) is the key we're looking for
+        table.update_peer(0b0110, 'six')
+        table.update_peer(0b0111, 'seven')
+        table.update_peer(0b1000, 'eight')
+        table.update_peer(0b1001, 'nine')
+
+        self.assertEqual([
+            (0b0111, 'seven'),
+            (0b0110, 'six'),
+            (0b0100, 'four'),
+            (0b0011, 'three'),
+            (0b0010, 'two'),
+        ], list(table.find_closest_peers(0b0101)))
+
+    def find_closest_peers(self, key, k=None):
+        k = k or self.k
+        bucket_index = self.bucket_index(key)
+        found = 0
+        for i in range(bucket_index, 0, -1):
+            bucket = self.buckets[i]
+            while found <= k:
+                for peer_identifier in reversed(bucket):
+                    yield peer_identifier, bucket[peer_identifier]
+                    found += 1
+            if found == k:
+                return

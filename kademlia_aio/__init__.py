@@ -1,6 +1,7 @@
 import asyncio
 from collections import OrderedDict
 from functools import wraps
+from itertools import zip_longest
 import hashlib
 import logging
 import pickle
@@ -172,6 +173,21 @@ class RoutingTable(object):
                 del replacement_cache[peer_identifier]
             replacement_cache[peer_identifier] = peer
 
+    def find_closest_peers(self, key, k=None):
+        k = k or self.k
+        found = 0
+        farther = range(self.bucket_index(key), -1, -1)
+        closer = range(self.bucket_index(key) + 1, 160, 1)
+        for f, c in zip_longest(farther, closer):
+            for i in (f, c):
+                if i is None:
+                    continue
+                bucket = self.buckets[i]
+                for peer_identifier in reversed(bucket):
+                    yield peer_identifier, bucket[peer_identifier]
+                    found += 1
+                    if found == k:
+                        return
 
 def get_identifier(key):
     if hasattr(key, 'encode'):
