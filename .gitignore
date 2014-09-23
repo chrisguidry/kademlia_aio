@@ -1,2 +1,6 @@
 .environment
 __pycache__
+.tox
+.coverage
+kademlia_aio.egg-info/
+

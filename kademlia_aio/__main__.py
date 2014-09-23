@@ -16,7 +16,7 @@ loop = asyncio.get_event_loop()
 loop.add_signal_handler(signal.SIGINT, loop.stop)
 
 transport, node = loop.run_until_complete(loop.create_datagram_endpoint(KademliaNode, local_addr=(local_address, int(port))))
-logger.info('Listening as node %s...', node.node_identifier)
+logger.info('Listening as node %s...', node.identifier)
 
 loop.run_forever()
 loop.close()

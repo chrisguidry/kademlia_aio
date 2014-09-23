@@ -5,7 +5,7 @@ import signal
 import socket
 import sys
 
-from kademlia_aio import KademliaNode, logging_to_console
+from kademlia_aio import KademliaNode, get_identifier, logging_to_console
 
 logging_to_console()
 
@@ -23,9 +23,9 @@ def ping_forever():
     while True:
         peer = random.choice(peers)
         try:
-            peer_id = yield from node.ping(peer)
-            yield from node.store(peer, 'hello', 'world')
-            stored = yield from node.find_value(peer, 'hello')
+            peer_id = yield from node.ping(peer, node.identifier)
+            yield from node.store(peer, node.identifier, get_identifier('hello'), 'world')
+            stored = yield from node.find_value(peer, node.identifier, get_identifier('hello'))
             logger.info('%r from %r (%r)', stored, peer, peer_id)
             yield from asyncio.sleep(1)
         except socket.timeout:
