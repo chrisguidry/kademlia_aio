@@ -3,6 +3,7 @@ import unittest
 
 from kademlia_aio import RoutingTable, get_identifier
 
+
 class RoutingTableTests(unittest.TestCase):
     def test_construction(self):
         table = RoutingTable(0b0001)
@@ -62,7 +63,6 @@ class RoutingTableTests(unittest.TestCase):
 
         bucket = table.buckets[157]
 
-
         table.update_peer(two, ('10.0.0.2', 12345))
         self.assertEqual(('10.0.0.2', 12345), bucket[two])
 
@@ -113,6 +113,39 @@ class RoutingTableTests(unittest.TestCase):
         self.assertEqual(1, len(replacement_cache))
         self.assertEqual('six-new', replacement_cache[six])
 
+    def test_replacing_peer(self):
+        table = RoutingTable(0b1111, k=5)
+        one = 2**158 - 1
+        two = 2**158 - 2
+        three = 2**158 - 3
+        four = 2**158 - 4
+        five = 2**158 - 5
+        six = 2**158 - 6
+
+        bucket_index = 2
+
+        for i in range(1, 7):
+            self.assertEqual(bucket_index, table.bucket_index(2**158-i))
+
+        bucket = table.buckets[bucket_index]
+        replacement_cache = table.replacement_caches[bucket_index]
+
+        table.update_peer(one, 'one')
+        table.update_peer(two, 'two')
+        table.update_peer(three, 'three')
+        table.update_peer(four, 'four')
+        table.update_peer(five, 'five')
+        table.update_peer(six, 'six')
+
+        self.assertEqual(5, len(bucket))
+        self.assertEqual(1, len(replacement_cache))
+        self.assertEqual('six', replacement_cache[six])
+
+        table.forget_peer(three)
+        self.assertEqual(5, len(bucket))
+        self.assertEqual(0, len(replacement_cache))
+        self.assertEqual('six', bucket[six])
+
     def test_finding_peers(self):
         table = RoutingTable(0b0000, k=5)
 
@@ -134,15 +167,10 @@ class RoutingTableTests(unittest.TestCase):
             (0b0010, 'two'),
         ], list(table.find_closest_peers(0b0101)))
 
-    def find_closest_peers(self, key, k=None):
-        k = k or self.k
-        bucket_index = self.bucket_index(key)
-        found = 0
-        for i in range(bucket_index, 0, -1):
-            bucket = self.buckets[i]
-            while found <= k:
-                for peer_identifier in reversed(bucket):
-                    yield peer_identifier, bucket[peer_identifier]
-                    found += 1
-            if found == k:
-                return
+        self.assertEqual([
+            (0b1001, 'nine'),
+            (0b1000, 'eight'),
+            (0b0111, 'seven'),
+            (0b0110, 'six'),
+            (0b0100, 'four'),
+        ], list(table.find_closest_peers(2**160-1)))

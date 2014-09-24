@@ -34,9 +34,10 @@ def remote(func):
     return inner
 
 class DatagramRPCProtocol(asyncio.DatagramProtocol):
-    def __init__(self):
+    def __init__(self, reply_timeout=5):
         self.outstanding_requests = {}
         self.reply_functions = self.find_reply_functions()
+        self.reply_timeout = reply_timeout
         super(DatagramRPCProtocol, self).__init__()
 
     def find_reply_functions(self):
@@ -90,7 +91,7 @@ class DatagramRPCProtocol(asyncio.DatagramProtocol):
         self.outstanding_requests[message_identifier] = reply
 
         loop = asyncio.get_event_loop()
-        loop.call_later(5, self.reply_timed_out, message_identifier)
+        loop.call_later(self.reply_timeout, self.reply_timed_out, message_identifier)
 
         message = pickle.dumps(('request', message_identifier, procedure_name, args, kwargs))
         self.transport.sendto(message, peer)
@@ -160,6 +161,9 @@ class RoutingTable(object):
         return 160 - self.distance(peer_identifier).bit_length()
 
     def update_peer(self, peer_identifier, peer):
+        if peer_identifier == self.node_identifier:
+            return
+
         bucket_index = self.bucket_index(peer_identifier)
         bucket = self.buckets[bucket_index]
         if peer_identifier in bucket:
@@ -172,6 +176,19 @@ class RoutingTable(object):
             if peer_identifier in replacement_cache:
                 del replacement_cache[peer_identifier]
             replacement_cache[peer_identifier] = peer
+
+    def forget_peer(self, peer_identifier):
+        if peer_identifier == self.node_identifier:
+            return
+
+        bucket_index = self.bucket_index(peer_identifier)
+        bucket = self.buckets[bucket_index]
+        replacement_cache = self.replacement_caches[bucket_index]
+        if peer_identifier in bucket:
+            del bucket[peer_identifier]
+            if len(replacement_cache):
+                replacement_identifier, replacement_peer = replacement_cache.popitem()
+                bucket[replacement_identifier] = replacement_peer
 
     def find_closest_peers(self, key, k=None):
         k = k or self.k
@@ -188,6 +205,7 @@ class RoutingTable(object):
                     found += 1
                     if found == k:
                         return
+
 
 def get_identifier(key):
     if hasattr(key, 'encode'):
