@@ -134,14 +134,14 @@ class KademliaNode(DatagramRPCProtocol):
     @remote
     def find_node(self, peer, peer_identifier, key):
         logger.info('find_node(%r, %r, %r)', peer, peer_identifier, key)
-        raise NotImplementedError()
+        return (self.identifier, self.routing_table.find_closest_peers(key))
 
     @remote
     def find_value(self, peer, peer_identifier, key):
         logger.info('find_value(%r, %r, %r)', peer, peer_identifier, key)
         if key in self.storage:
-            return (self.identifier, self.storage[key])
-        raise NotImplementedError()
+            return (self.identifier, ('found', self.storage[key]))
+        return (self.identifier, ('notfound', self.routing_table.find_closest_peers(key)))
 
 
 class RoutingTable(object):
@@ -191,8 +191,8 @@ class RoutingTable(object):
                 bucket[replacement_identifier] = replacement_peer
 
     def find_closest_peers(self, key, k=None):
+        peers = []
         k = k or self.k
-        found = 0
         farther = range(self.bucket_index(key), -1, -1)
         closer = range(self.bucket_index(key) + 1, 160, 1)
         for f, c in zip_longest(farther, closer):
@@ -201,10 +201,10 @@ class RoutingTable(object):
                     continue
                 bucket = self.buckets[i]
                 for peer_identifier in reversed(bucket):
-                    yield peer_identifier, bucket[peer_identifier]
-                    found += 1
-                    if found == k:
-                        return
+                    peers.append((peer_identifier, bucket[peer_identifier]))
+                    if len(peers) == k:
+                        return peers
+        return peers
 
 
 def get_identifier(key):

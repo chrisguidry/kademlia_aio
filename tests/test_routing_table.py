@@ -165,7 +165,7 @@ class RoutingTableTests(unittest.TestCase):
             (0b0100, 'four'),
             (0b0011, 'three'),
             (0b0010, 'two'),
-        ], list(table.find_closest_peers(0b0101)))
+        ], table.find_closest_peers(0b0101))
 
         self.assertEqual([
             (0b1001, 'nine'),
@@ -173,4 +173,4 @@ class RoutingTableTests(unittest.TestCase):
             (0b0111, 'seven'),
             (0b0110, 'six'),
             (0b0100, 'four'),
-        ], list(table.find_closest_peers(2**160-1)))
+        ], table.find_closest_peers(2**160-1))
