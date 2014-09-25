@@ -3,9 +3,11 @@ from collections import OrderedDict
 from functools import wraps
 from itertools import zip_longest
 import hashlib
+import heapq
 import logging
 import pickle
 import random
+import signal
 import socket
 
 
@@ -104,9 +106,10 @@ class DatagramRPCProtocol(asyncio.DatagramProtocol):
 
 
 class KademliaNode(DatagramRPCProtocol):
-    def __init__(self):
+    def __init__(self, alpha=3):
         self.identifier = get_random_identifier()
         self.routing_table = RoutingTable(self.identifier)
+        self.alpha = alpha
         self.storage = {}
         super(KademliaNode, self).__init__()
 
@@ -142,6 +145,53 @@ class KademliaNode(DatagramRPCProtocol):
         if key in self.storage:
             return (self.identifier, ('found', self.storage[key]))
         return (self.identifier, ('notfound', self.routing_table.find_closest_peers(key)))
+
+    @asyncio.coroutine
+    def lookup_node(self, key):
+        hashed_key = get_identifier(key)
+        contacted = set()
+        dead = set()
+        distance = lambda prospect: hashed_key ^ prospect
+        shortlist = [(distance(peer_identifier), (peer_identifier, peer))
+                     for peer_identifier, peer in
+                     self.routing_table.find_closest_peers(hashed_key)]
+        if not shortlist:
+            return None
+
+        heapq.heapify(shortlist)
+        closest = shortlist[0][1]
+        new_closest = None
+        while new_closest != closest:
+            if new_closest:
+                closest = new_closest
+
+            for _, (peer_identifier, peer) in heapq.nsmallest(self.alpha, shortlist):
+                if peer_identifier in dead or peer_identifier in contacted:
+                    continue
+
+                contacted.add(peer_identifier)
+                try:
+                    contacts = yield from self.find_node(peer, self.identifier, hashed_key)
+                except socket.timeout:
+                    self.routing_table.forget_peer(peer_identifier)
+                    dead.add(peer_identifier)
+                    continue
+
+                for new_peer_identifier, new_peer in contacts:
+                    distance_to_peer = distance(new_peer_identifier)
+                    heapq.heappush(shortlist, (distance_to_peer, (peer_identifier, new_peer)))
+                    if distance_to_peer < distance(closest[0]):
+                        new_closest = (new_peer_identifier, new_peer)
+
+        return closest
+
+    @asyncio.coroutine
+    def put(self, key, value):
+        raise NotImplementedError()
+
+    @asyncio.coroutine
+    def get(self, key, value):
+        raise NotImplementedError()
 
 
 class RoutingTable(object):
@@ -224,3 +274,14 @@ def logging_to_console():
     stream_handler.setLevel(logging.DEBUG)
     stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
     root_logger.addHandler(stream_handler)
+
+def setup_event_loop():
+    loop = asyncio.get_event_loop()
+    loop.add_signal_handler(signal.SIGINT, loop.stop)
+
+def start_node(local_address, port):
+    loop = asyncio.get_event_loop()
+    logger.info('Starting node on %s:%s...', local_address, port)
+    transport, node = loop.run_until_complete(loop.create_datagram_endpoint(KademliaNode, local_addr=(local_address, int(port))))
+    logger.info('Listening as node %s...', node.identifier)
+    return node
