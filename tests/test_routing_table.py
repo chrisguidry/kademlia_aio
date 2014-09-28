@@ -36,6 +36,20 @@ class RoutingTableTests(unittest.TestCase):
         self.assertRaises(ValueError, table.bucket_index, -1)
         self.assertRaises(ValueError, table.bucket_index, 2**160)
 
+    def test_update_peer_self(self):
+        table = RoutingTable(0b0001)
+        table.update_peer(0b0001, ('10.0.0.1', 12345))
+        for i in range(160):
+            self.assertFalse(table.buckets[i])
+            self.assertFalse(table.replacement_caches[i])
+
+    def test_forget_peer_self(self):
+        table = RoutingTable(0b0001)
+        table.forget_peer(0b0001)
+        for i in range(160):
+            self.assertFalse(table.buckets[i])
+            self.assertFalse(table.replacement_caches[i])
+
     def test_update_peer_plenty_of_room(self):
         table = RoutingTable(0b0001)
         table.update_peer(0b0000, ('10.0.0.1', 12345))
@@ -146,6 +160,30 @@ class RoutingTableTests(unittest.TestCase):
         self.assertEqual(0, len(replacement_cache))
         self.assertEqual('six', bucket[six])
 
+    def test_finding_not_enough(self):
+        table = RoutingTable(0b0000, k=5)
+
+        table.update_peer(0b0001, 'one')
+        table.update_peer(0b0010, 'two')
+        table.update_peer(0b0011, 'three')
+
+        self.assertEqual([
+            (0b0011, 'three'),
+            (0b0010, 'two'),
+            (0b0001, 'one')
+        ], table.find_closest_peers(0b0101))
+
+        self.assertEqual([
+            (0b0011, 'three'),
+            (0b0010, 'two'),
+            (0b0001, 'one')
+        ], table.find_closest_peers(2**160-1))
+
+        self.assertEqual([
+            (0b0011, 'three'),
+            (0b0001, 'one')
+        ], table.find_closest_peers(2**160-1, excluding=0b0010))
+
     def test_finding_peers(self):
         table = RoutingTable(0b0000, k=5)
 
@@ -174,3 +212,11 @@ class RoutingTableTests(unittest.TestCase):
             (0b0110, 'six'),
             (0b0100, 'four'),
         ], table.find_closest_peers(2**160-1))
+
+        self.assertEqual([
+            (0b1001, 'nine'),
+            (0b0111, 'seven'),
+            (0b0110, 'six'),
+            (0b0100, 'four'),
+            (0b0011, 'three'),
+        ], table.find_closest_peers(2**160-1, excluding=0b1000))

@@ -1,7 +1,7 @@
 import asyncio
 import sys
 
-from kademlia_aio import logging_to_console, setup_event_loop, start_node
+from kademlia_aio.services import logging_to_console, setup_event_loop, start_node
 
 logging_to_console()
 setup_event_loop()

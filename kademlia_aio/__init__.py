@@ -3,11 +3,9 @@ from collections import OrderedDict
 from functools import wraps
 from itertools import zip_longest
 import hashlib
-import heapq
 import logging
 import pickle
 import random
-import signal
 import socket
 
 
@@ -52,12 +50,6 @@ class DatagramRPCProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         logger.info('connection_made: %r', transport)
         self.transport = transport
-
-    def connection_lost(self, exception):
-        logger.info('connection_lost: %r', exception)
-
-    def error_received(self, exception):
-        logger.info('error_received: %r', exception)
 
     def datagram_received(self, data, peer):
         logger.info('data_received: %r, %r', peer, data)
@@ -106,9 +98,12 @@ class DatagramRPCProtocol(asyncio.DatagramProtocol):
 
 
 class KademliaNode(DatagramRPCProtocol):
-    def __init__(self, alpha=3):
-        self.identifier = get_random_identifier()
-        self.routing_table = RoutingTable(self.identifier)
+    def __init__(self, alpha=3, k=20, identifier=None):
+        if identifier is None:
+            identifier = get_random_identifier()
+        self.identifier = identifier
+        self.routing_table = RoutingTable(self.identifier, k=k)
+        self.k = k
         self.alpha = alpha
         self.storage = {}
         super(KademliaNode, self).__init__()
@@ -137,63 +132,70 @@ class KademliaNode(DatagramRPCProtocol):
     @remote
     def find_node(self, peer, peer_identifier, key):
         logger.info('find_node(%r, %r, %r)', peer, peer_identifier, key)
-        return (self.identifier, self.routing_table.find_closest_peers(key))
+        return (self.identifier, self.routing_table.find_closest_peers(key, excluding=peer_identifier))
 
     @remote
     def find_value(self, peer, peer_identifier, key):
         logger.info('find_value(%r, %r, %r)', peer, peer_identifier, key)
         if key in self.storage:
             return (self.identifier, ('found', self.storage[key]))
-        return (self.identifier, ('notfound', self.routing_table.find_closest_peers(key)))
+        return (self.identifier, ('notfound', self.routing_table.find_closest_peers(key, excluding=peer_identifier)))
 
     @asyncio.coroutine
-    def lookup_node(self, hashed_key):
+    def lookup_node(self, hashed_key, find_value=False):
+        distance = lambda peer: peer[0] ^ hashed_key
         contacted, dead = set(), set()
-        distance = lambda prospect: hashed_key ^ prospect
-        shortlist = [(distance(peer_identifier), (peer_identifier, peer))
-                     for peer_identifier, peer in
-                     self.routing_table.find_closest_peers(hashed_key)]
-        if not shortlist:
-            return None
-
-        heapq.heapify(shortlist)
+        peers = {(peer_identifier, peer)
+                 for peer_identifier, peer in
+                 self.routing_table.find_closest_peers(hashed_key)}
+        if not peers:
+            raise KeyError(hashed_key, 'No peers available.')
 
         while True:
-            uncontacted = [(peer_identifier, peer)
-                           for _, (peer_identifier, peer)
-                           in heapq.nsmallest(self.alpha, shortlist)
-                           if (peer_identifier in dead or peer_identifier in contacted)]
+            uncontacted = peers - contacted
             if not uncontacted:
                 break
 
-            for peer_identifier, peer in uncontacted:
-                contacted.add(peer_identifier)
+            closest = sorted(uncontacted, key=distance)[:self.alpha]
+            for peer_identifier, peer in closest:
+                contacted.add((peer_identifier, peer))
                 try:
-                    contacts = yield from self.find_node(peer, self.identifier, hashed_key)
+                    if find_value:
+                        result, contacts = yield from self.find_value(peer, self.identifier, hashed_key)
+                        if result == 'found':
+                            return contacts
+                    else:
+                        contacts = yield from self.find_node(peer, self.identifier, hashed_key)
                 except socket.timeout:
                     self.routing_table.forget_peer(peer_identifier)
-                    dead.add(peer_identifier)
+                    dead.add((peer_identifier, peer))
                     continue
 
                 for new_peer_identifier, new_peer in contacts:
-                    heapq.heappush(shortlist, (distance(new_peer_identifier), (peer_identifier, new_peer)))
+                    if new_peer_identifier == self.identifier:
+                        continue
+                    peers.add((new_peer_identifier, new_peer))
 
-        return [(peer_identifier, peer)
-                for _, (peer_identifier, peer)
-                in heapq.nsmallest(self.routing_table.k, shortlist)
-                if peer_identifier not in dead]
+        if find_value:
+            raise KeyError(hashed_key, 'Not found among any available peers.')
+        else:
+            return sorted(peers - dead, key=distance)[:self.k]
 
     @asyncio.coroutine
     def put(self, raw_key, value):
         hashed_key = get_identifier(raw_key)
-        peers = yield from self.lookup_node(hashed_key)
-        for peer_identifier, peer in peers:
-            yield from self.store(peer, self.identifier, hashed_key, value)
+        peers = yield from self.lookup_node(hashed_key, find_value=False)
+        store_tasks = [self.store(peer, self.identifier, hashed_key, value) for _, peer in peers]
+        results = yield from asyncio.gather(*store_tasks, return_exceptions=True)
+        return len([r for r in results if r == True])
 
     @asyncio.coroutine
-    def get(self, raw_key, value):
+    def get(self, raw_key):
         hashed_key = get_identifier(raw_key)
-        raise NotImplementedError()
+        if hashed_key in self.storage:
+            return self.storage[hashed_key]
+        answer = yield from self.lookup_node(hashed_key, find_value=True)
+        return answer
 
 
 class RoutingTable(object):
@@ -242,7 +244,7 @@ class RoutingTable(object):
                 replacement_identifier, replacement_peer = replacement_cache.popitem()
                 bucket[replacement_identifier] = replacement_peer
 
-    def find_closest_peers(self, key, k=None):
+    def find_closest_peers(self, key, excluding=None, k=None):
         peers = []
         k = k or self.k
         farther = range(self.bucket_index(key), -1, -1)
@@ -253,6 +255,8 @@ class RoutingTable(object):
                     continue
                 bucket = self.buckets[i]
                 for peer_identifier in reversed(bucket):
+                    if peer_identifier == excluding:
+                        continue
                     peers.append((peer_identifier, bucket[peer_identifier]))
                     if len(peers) == k:
                         return peers
@@ -268,22 +272,3 @@ def get_identifier(key):
 def get_random_identifier():
     identifier = random.getrandbits(160)
     return get_identifier(identifier.to_bytes(20, byteorder='big', signed=False))
-
-def logging_to_console():
-    kademlia_logger = logging.getLogger('kademlia_aio')
-    kademlia_logger.setLevel(logging.DEBUG)
-    stream_handler = logging.StreamHandler()
-    stream_handler.setLevel(logging.DEBUG)
-    stream_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-    kademlia_logger.addHandler(stream_handler)
-
-def setup_event_loop():
-    loop = asyncio.get_event_loop()
-    loop.add_signal_handler(signal.SIGINT, loop.stop)
-
-def start_node(local_address, port):
-    loop = asyncio.get_event_loop()
-    logger.info('Starting node on %s:%s...', local_address, port)
-    transport, node = loop.run_until_complete(loop.create_datagram_endpoint(KademliaNode, local_addr=(local_address, int(port))))
-    logger.info('Listening as node %s...', node.identifier)
-    return node
