@@ -1,3 +1,7 @@
+'''
+Creates a Kademlia client on port 10000 for interactive testing.  To start it, run
+`python kademlia_aio.local_client`.
+'''
 import asyncio
 import logging
 import random

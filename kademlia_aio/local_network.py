@@ -1,6 +1,9 @@
+'''
+Creates a local Kademlia network of 40 nodes on ports 9000-9039 for testing.  To start it, run
+`python kademlia_aio.local_network`
+'''
 import asyncio
 import logging
-import sys
 
 from kademlia_aio.services import logging_to_console, setup_event_loop, start_node
 
