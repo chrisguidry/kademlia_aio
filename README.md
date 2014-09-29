@@ -30,3 +30,6 @@ Resources
 * The original Kademlia paper: http://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf
 * A more thorough specification: http://xlattice.sourceforge.net/components/protocol/kademlia/specs.html
 * Inspiration from a Twisted implemenation: https://github.com/bmuller/kademlia/
+
+
+The MIT License (MIT). Copyright (c) 2014 Chris Guidry <chris@theguidrys.us>
